@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="hi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MeshChat Admin</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#14171c;--mu:#6b7280;--bd:#e3e6eb;--ac:#2563eb;--ok:#16a34a;--wa:#d97706;--er:#dc2626}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--tx:#e8eaee;--mu:#8b93a3;--bd:#272d38;--ac:#60a5fa;--ok:#4ade80;--wa:#fbbf24;--er:#f87171}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--tx);font:14px/1.45 system-ui,sans-serif;padding:12px;padding-top:calc(12px + env(safe-area-inset-top,0px));padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+h1{font-size:18px;margin:0 0 10px}.g{display:grid;grid-template-columns:repeat(auto-fit,minmax(130px,1fr));gap:8px;margin-bottom:10px}
+.c{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:10px;margin-bottom:10px}.g .c{margin:0}
+.c b.n{display:block;font-size:24px}.c span{color:var(--mu);font-size:12px}
+.w{overflow-x:auto}table{width:100%;border-collapse:collapse;white-space:nowrap}th,td{text-align:left;padding:7px 8px;border-bottom:1px solid var(--bd)}th{color:var(--mu);font-weight:500;font-size:12px}
+.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--mu);margin-right:6px}.dot.on{background:var(--ok)}
+button{font:inherit;padding:4px 10px;border-radius:7px;border:1px solid var(--er);background:transparent;color:var(--er);cursor:pointer}
+#ev{max-height:260px;overflow:auto;font:12.5px/1.6 ui-monospace,monospace}#ev div{border-bottom:1px solid var(--bd)}
+.join{color:var(--ok)}.leave,.kick{color:var(--er)}.queue{color:var(--wa)}.msg{color:var(--ac)}
+footer{text-align:center;color:var(--mu);font-size:12px;padding:8px}
+</style></head><body>
+<h1>🛠️ MeshChat Admin <small id="up" style="color:var(--mu);font-weight:400"></small></h1>
+<div class="g">
+<div class="c"><b class="n" id="s1">0</b><span>Registered users</span></div>
+<div class="c"><b class="n" id="s2" style="color:var(--ok)">0</b><span>Abhi online</span></div>
+<div class="c"><b class="n" id="s3">0</b><span>Messages relay hue</span></div>
+<div class="c"><b class="n" id="s4" style="color:var(--wa)">0</b><span>Queue me (offline)</span></div>
+</div>
+<div class="c"><b>Users</b><div class="w"><table><thead><tr><th>User</th><th>IP</th><th>Device</th><th>Connected</th><th>Sent</th><th>Recv</th><th>Queue</th><th></th></tr></thead><tbody id="tb"></tbody></table></div></div>
+<div class="c"><b>Live activity</b> <small style="color:var(--mu)">(sirf metadata, message content E2E encrypted hai)</small><div id="ev"></div></div>
+<footer>Designed &amp; developed by Rohit Kumar Kushwaha</footer>
+<script>
+const $=i=>document.getElementById(i);
+const ago=ms=>{const s=Math.max(0,ms/1000|0);return s<60?s+'s':s<3600?(s/60|0)+'m':s<86400?(s/3600|0)+'h':(s/86400|0)+'d'};
+async function load(){try{const d=await (await fetch('api/stats')).json();
+$('s1').textContent=d.registered;$('s2').textContent=d.online;$('s3').textContent=d.relayed;$('s4').textContent=d.queued;$('up').textContent='uptime '+ago(d.uptime);
+const tb=$('tb');tb.innerHTML='';
+d.users.sort((a,b)=>b.online-a.online||a.name.localeCompare(b.name)).forEach(u=>{const r=tb.insertRow();
+[ (u.online?'<span class="dot on"></span>':'<span class="dot"></span>')+'<b></b>', '', '', '', u.sent, u.recv, u.queued, ''].forEach((h,i)=>{r.insertCell().innerHTML=h});
+r.cells[0].querySelector('b').textContent=u.name;r.cells[1].textContent=u.ip||'-';r.cells[2].textContent=u.device;
+r.cells[3].textContent=u.online?ago(d.now-u.since)+' se':'last seen '+ago(d.now-u.lastSeen)+' pehle';
+if(u.online){const b=document.createElement('button');b.textContent='Kick';b.onclick=async()=>{if(confirm(u.name+' ko disconnect karein?')){await fetch('api/kick/'+u.name,{method:'POST'});load()}};r.cells[7].append(b)}});
+const e=$('ev');e.innerHTML='';d.events.forEach(x=>{const v=document.createElement('div');v.className=x.type;v.textContent=new Date(x.t).toLocaleTimeString()+'  '+x.text;e.append(v)})}catch{}}
+load();setInterval(load,2000);
+</script></body></html>
