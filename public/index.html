@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="hi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>MeshChat</title>
+<style>
+:root{--bg:#f4f5f7;--card:#fff;--tx:#14171c;--mu:#6b7280;--bd:#e3e6eb;--ac:#2563eb;--me:#dbeafe;--ok:#16a34a}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--card:#171b22;--tx:#e8eaee;--mu:#8b93a3;--bd:#272d38;--ac:#60a5fa;--me:#1e3a5f;--ok:#4ade80}}
+*{box-sizing:border-box}html,body{height:100%;margin:0}body{background:var(--bg);color:var(--tx);font:15px/1.4 system-ui,sans-serif;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+input,button{font:inherit;padding:9px 11px;border-radius:9px;border:1px solid var(--bd);background:var(--card);color:var(--tx)}
+button{cursor:pointer}button.p,#sd,#go{background:var(--ac);color:#fff;border-color:var(--ac)}
+#login{max-width:340px;margin:18vh auto 0;padding:20px;text-align:center}#login input{width:100%;margin:10px 0}#err{color:#dc2626;min-height:20px}
+#app{display:flex;height:100%}#side{width:300px;border-right:1px solid var(--bd);background:var(--card);display:flex;flex-direction:column}
+#chat{flex:1;display:flex;flex-direction:column;min-width:0}
+header{padding:10px 12px;border-bottom:1px solid var(--bd);display:flex;gap:8px;align-items:center;background:var(--card)}
+.row{display:flex;gap:6px;padding:8px}.row input{flex:1;min-width:0}
+#list{overflow:auto;flex:1}.ct{padding:10px 12px;border-bottom:1px solid var(--bd);cursor:pointer}.ct:hover,.ct.on{background:var(--bg)}
+.ct small{display:block;color:var(--mu);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.dot{display:inline-block;width:9px;height:9px;border-radius:50%;background:var(--bd);margin-right:6px}.dot.on{background:var(--ok)}
+#msgs{flex:1;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:6px}
+.b{max-width:78%;padding:7px 10px;border-radius:12px;background:var(--card);border:1px solid var(--bd);align-self:flex-start;word-wrap:break-word}
+.b.m{align-self:flex-end;background:var(--me);border-color:transparent}.b small{display:block;text-align:right;color:var(--mu);font-size:11px}
+#back{display:none}#empty{margin:auto;color:var(--mu)}
+footer{text-align:center;color:var(--mu);font-size:11px;padding:6px}
+@media(max-width:700px){#side{width:100%}#chat{display:none}#app.open #side{display:none}#app.open #chat{display:flex}#back{display:block}}
+</style></head><body>
+<div id="login"><h1>💬 MeshChat</h1><p style="color:var(--mu)">End-to-end encrypted • offline queue</p>
+<input id="nm" placeholder="Apna username (a-z, 0-9)" autocomplete="off"><button id="go">Join</button><div id="err"></div>
+<footer>Designed &amp; developed by Rohit Kumar Kushwaha</footer></div>
+<div id="app" hidden>
+<aside id="side"><header><b id="me"></b><small id="st" style="color:var(--ok)">● online</small></header>
+<div class="row"><input id="add" placeholder="Contact ka username"><button id="addb">+</button></div>
+<div id="list"></div><footer>Designed &amp; developed by Rohit Kumar Kushwaha</footer></aside>
+<main id="chat"><header><button id="back">←</button><b id="peer">Chat chuno</b><small id="pst" style="color:var(--mu)"></small></header>
+<div id="msgs"><div id="empty">Kisi contact ko select karo</div></div>
+<div class="row"><input id="tx" placeholder="Message…" autocomplete="off"><button id="sd">Send</button></div></main>
+</div>
+<script src="/socket.io/socket.io.js"></script>
+<script>
+const $=i=>document.getElementById(i),sock=io({autoConnect:false}),ECDH={name:'ECDH',namedCurve:'P-256'};
+let me,name,hist={},peer=null,online=new Set(),known=new Set(),cache={},outbox=[],busy=false;
+const b64=u=>btoa(String.fromCharCode(...new Uint8Array(u))),ub=a=>Uint8Array.from(atob(a),c=>c.charCodeAt(0));
+const emit=(ev,d)=>new Promise(r=>sock.emit(ev,d,r)),save=()=>localStorage.setItem('h:'+name,JSON.stringify(hist));
+const ICON={pending:'🕓',sent:'✓',delivered:'✓✓',failed:'❌'};
+
+async function ident(n){ // each user gets an ECDH keypair, private key never leaves this browser
+  let j=localStorage.getItem('kp:'+n);
+  if(j){j=JSON.parse(j);return{priv:await crypto.subtle.importKey('jwk',j.priv,ECDH,true,['deriveKey']),pub:j.pub}}
+  const k=await crypto.subtle.generateKey(ECDH,true,['deriveKey']);
+  const priv=await crypto.subtle.exportKey('jwk',k.privateKey),pub=await crypto.subtle.exportKey('jwk',k.publicKey);
+  localStorage.setItem('kp:'+n,JSON.stringify({priv,pub}));return{priv:k.privateKey,pub}}
+async function shared(p){ // ECDH -> AES-GCM key shared with peer
+  if(cache[p])return cache[p];const pj=await emit('getkey',p);if(!pj)return null;
+  const pk=await crypto.subtle.importKey('jwk',pj,ECDH,false,[]);
+  return cache[p]=await crypto.subtle.deriveKey({name:'ECDH',public:pk},me.priv,{name:'AES-GCM',length:256},false,['encrypt','decrypt'])}
+
+$('go').onclick=async()=>{name=$('nm').value.trim().toLowerCase().replace(/[^a-z0-9_]/g,'');if(!name)return;
+  me=await ident(name);hist=JSON.parse(localStorage.getItem('h:'+name)||'{}');Object.keys(hist).forEach(k=>known.add(k));sock.connect()};
+$('nm').onkeydown=e=>{if(e.key==='Enter')$('go').click()};
+sock.on('connect',async()=>{const r=await emit('join',{name,pub:me.pub});
+  if(!r.ok){$('err').textContent=r.err;sock.disconnect();return}
+  $('login').hidden=true;$('app').hidden=false;$('me').textContent=name;$('st').textContent='● online';$('st').style.color='var(--ok)';flush();render()});
+sock.on('disconnect',()=>{$('st').textContent='○ offline (queue me)';$('st').style.color='var(--mu)'});
+sock.on('users',l=>{l.forEach(u=>known.add(u.name));known.delete(name);online=new Set(l.filter(u=>u.on).map(u=>u.name));render()});
+sock.on('status',({id,to,state})=>setState(to,id,state));
+sock.on('msg',async(m,ack)=>{let text;
+  try{const k=await shared(m.from),iv=ub(m.pl.iv);text=new TextDecoder().decode(await crypto.subtle.decrypt({name:'AES-GCM',iv},k,ub(m.pl.ct)))}
+  catch{text='⚠️ decrypt nahi hua'}
+  add(m.from,{id:m.id,mine:0,text,ts:m.ts,hops:m.hops});ack&&ack()});
+
+function add(p,m){hist[p]=hist[p]||[];if(hist[p].some(x=>x.id===m.id))return;hist[p].push(m);known.add(p);save();render()}
+function setState(p,id,s){const m=(hist[p]||[]).find(x=>x.id===id);if(m){m.state=s;save();render()}}
+async function flush(){ // client-side store-and-forward: unsent messages wait in outbox until connected
+  if(busy||!sock.connected)return;busy=true;
+  while(outbox.length&&sock.connected){const o=outbox[0],k=await shared(o.to);
+    if(!k){outbox.shift();setState(o.to,o.id,'failed');continue}
+    const iv=crypto.getRandomValues(new Uint8Array(12)),ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},k,new TextEncoder().encode(o.text));
+    const r=await emit('send',{id:o.id,to:o.to,ttl:7,hops:[name],ts:Date.now(),pl:{iv:b64(iv),ct:b64(ct)}});
+    outbox.shift();setState(o.to,o.id,r.state)}
+  busy=false}
+function send(){const t=$('tx').value.trim();if(!t||!peer)return;$('tx').value='';
+  const id=Math.random().toString(36).slice(2,10);add(peer,{id,mine:1,text:t,ts:Date.now(),state:'pending'});outbox.push({id,to:peer,text:t});flush()}
+$('sd').onclick=send;$('tx').onkeydown=e=>{if(e.key==='Enter')send()};
+$('addb').onclick=()=>{const n=$('add').value.trim().toLowerCase();if(n&&n!==name){known.add(n);peer=n;$('add').value='';$('app').classList.add('open');render()}};
+$('back').onclick=()=>{$('app').classList.remove('open');peer=null;render()};
+
+function render(){const L=$('list');L.innerHTML='';
+  [...known].sort((a,b)=>online.has(b)-online.has(a)||a.localeCompare(b)).forEach(n=>{
+    const d=document.createElement('div'),h=hist[n]||[],l=h[h.length-1];d.className='ct'+(n===peer?' on':'');
+    d.innerHTML='<span class="dot'+(online.has(n)?' on':'')+'"></span><b></b><small></small>';
+    d.querySelector('b').textContent=n;d.querySelector('small').textContent=l?(l.mine?'You: ':'')+l.text:'Naya contact';
+    d.onclick=()=>{peer=n;$('app').classList.add('open');render()};L.append(d)});
+  $('peer').textContent=peer||'Chat chuno';$('pst').textContent=peer?(online.has(peer)?'online':'offline'):'';
+  const M=$('msgs');M.innerHTML='';if(!peer){M.innerHTML='<div id="empty">Kisi contact ko select karo</div>';return}
+  (hist[peer]||[]).forEach(m=>{const d=document.createElement('div');d.className='b'+(m.mine?' m':'');
+    const t=document.createElement('span');t.textContent=m.text;const s=document.createElement('small');
+    s.textContent=new Date(m.ts).toLocaleTimeString([],{hour:'2-digit',minute:'2-digit'})+(m.mine?' '+(ICON[m.state]||''):'');d.append(t,s);M.append(d)});
+  M.scrollTop=M.scrollHeight}
+</script></body></html>
